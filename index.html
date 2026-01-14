@@ -335,11 +335,14 @@ pauseBtn.onclick = ()=>{
         clearTimeout(imageTimer);
         clearInterval(metroTimer);
         clearInterval(bpmTimer);
+        bgmSound.pause();
         pauseBtn.textContent = "▶ PLAY";
     } else {
         isPaused = false;
         scheduleNextImage();
         isRandomMode ? startRandomBPM() : startFixedBPM();
+
+         bgmSound.play().catch(()=>{});
         pauseBtn.textContent = "⏸ STOP";
     }
 };
