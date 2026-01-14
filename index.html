@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0">
+
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: black;
+}
+
+#container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#slideshow {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform-origin: center;
+}
+
+/* UI */
+#imageNumber {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 30;
+    color: white;
+    font-size: 16px;
+    background: rgba(0,0,0,0.5);
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+#pauseBtn, #modeBtn, #finishBtn {
+    position: absolute;
+    top: 10px;
+    z-index: 30;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: none;
+    color: white;
+    font-size: 14px;
+}
+
+#modeBtn { right: 250px; background: rgba(0,0,0,0.6); }
+#finishBtn { right: 170px; background: rgba(140,0,140,0.7); }
+#pauseBtn { right: 10px; background: rgba(0,0,0,0.6); }
+
+#bpmInput {
+    position: absolute;
+    top: 10px;
+    right: 95px;
+    width: 60px;
+    z-index: 30;
+    border-radius: 6px;
+    border: none;
+    padding: 4px;
+    text-align: center;
+    font-size: 14px;
+}
+
+/* ===== 音量UI ===== */
+#volumeArea {
+    position: absolute;
+    top: 48px;
+    right: 10px;
+    z-index: 30;
+    color: white;
+    font-size: 12px;
+}
+
+#volumeArea input {
+    width: 140px;
+}
+
+/* ===== BGMシーク ===== */
+#bgmSeekArea {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80%;
+    z-index: 30;
+    color: white;
+    font-size: 12px;
+}
+
+#bgmSeek {
+    width: 100%;
+}
+
+/* Effects */
+.corner {
+    position: absolute;
+    width: 35vmin;
+    height: 35vmin;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 20;
+    background: radial-gradient(circle,
+        rgba(255,120,170,0.4) 0%,
+        rgba(255,120,170,0.2) 35%,
+        rgba(255,120,170,0.08) 55%,
+        rgba(255,120,170,0) 70%);
+}
+
+.top-left { top:0; left:0; }
+.top-right { top:0; right:0; }
+.bottom-left { bottom:0; left:0; }
+.bottom-right { bottom:0; right:0; }
+
+@keyframes pulse {
+    0% { opacity: 0; }
+    15% { opacity: 1; }
+    100% { opacity: 0; }
+}
+.pulse { animation: pulse 0.45s ease-out; }
+
+@keyframes beatMove {
+    0% { transform: scale(1); }
+    30% {
+        transform: scale(var(--zoom))
+        translate(var(--x), var(--y))
+        rotate(var(--r));
+    }
+    100% { transform: scale(1); }
+}
+.beat { animation: beatMove 0.45s ease-out; }
+</style>
+</head>
+<body>
+
+<div id="container">
+    <img id="slideshow">
+    <div id="imageNumber"></div>
+
+    <button id="modeBtn">RANDOM</button>
+    <button id="finishBtn">FINISH</button>
+    <input id="bpmInput" type="number">
+    <button id="pauseBtn">⏸ STOP</button>
+
+    <!-- 音量 -->
+    <div id="volumeArea">
+        BGM<br>
+        <input id="bgmVolume" type="range" min="0" max="1" step="0.01" value="0.5"><br>
+        BPM<br>
+        <input id="bpmVolume" type="range" min="0" max="1" step="0.01" value="0.5">
+    </div>
+
+    <!-- BGMシーク -->
+    <div id="bgmSeekArea">
+        <input id="bgmSeek" type="range" min="0" max="100" value="0">
+    </div>
+
+    <div class="corner top-left"></div>
+    <div class="corner top-right"></div>
+    <div class="corner bottom-left"></div>
+    <div class="corner bottom-right"></div>
+</div>
+
+<audio id="metronome" src="sound/metronome.mp3"></audio>
+<audio id="bgmSound" src="sound/bgm.wav" loop></audio>
+<audio id="finishSound" src="sound/finish.mp3"></audio>
+
+<script>
+/* ===== 設定 ===== */
+const imageCount = 183;
+const imageFolder = "Image";
+const minInterval = 3000;
+const maxInterval = 5000;
+
+/* ===== 状態 ===== */
+let isPaused = false;
+let isRandomMode = true;
+let isFinished = false;
+let BPM = 30;
+
+let imageTimer = null;
+let metroTimer = null;
+let bpmTimer = null;
+
+let bgmVol = 0.5;
+let bpmVol = 0.5;
+
+let audioCtx = null;
+let useDefaultBeep = false;
+
+/* ===== DOM ===== */
+const slideshow = document.getElementById("slideshow");
+const imageNumber = document.getElementById("imageNumber");
+const pauseBtn = document.getElementById("pauseBtn");
+const modeBtn = document.getElementById("modeBtn");
+const finishBtn = document.getElementById("finishBtn");
+const bpmInput = document.getElementById("bpmInput");
+
+const bgmVolume = document.getElementById("bgmVolume");
+const bpmVolume = document.getElementById("bpmVolume");
+const bgmSeek = document.getElementById("bgmSeek");
+
+const metronome = document.getElementById("metronome");
+const bgmSound = document.getElementById("bgmSound");
+const finishSound = document.getElementById("finishSound");
+const corners = document.querySelectorAll(".corner");
+
+const rand = (a,b)=>Math.random()*(b-a)+a;
+
+/* ===== 音量 ===== */
+bgmVolume.oninput = ()=>{
+    bgmVol = bgmVolume.value;
+    bgmSound.volume = bgmVol;
+    finishSound.volume = bgmVol;
+};
+
+bpmVolume.oninput = ()=>{
+    bpmVol = bpmVolume.value;
+    metronome.volume = bpmVol;
+};
+
+/* ===== BGMシーク ===== */
+bgmSound.addEventListener("timeupdate", ()=>{
+    if (!bgmSound.duration) return;
+    bgmSeek.value = (bgmSound.currentTime / bgmSound.duration) * 100;
+});
+
+bgmSeek.oninput = ()=>{
+    if (!bgmSound.duration) return;
+    bgmSound.currentTime = (bgmSeek.value / 100) * bgmSound.duration;
+};
+
+/* ===== Image ===== */
+function scheduleNextImage() {
+    if (isPaused) return;
+    imageTimer = setTimeout(showNextImage, rand(minInterval,maxInterval));
+}
+
+function showNextImage() {
+    if (isPaused) return;
+    const i = Math.floor(Math.random()*imageCount)+1;
+    slideshow.src = `${imageFolder}/Image${i}.jpg`;
+    imageNumber.textContent = i;
+    scheduleNextImage();
+}
+
+/* ===== Beep ===== */
+function playDefaultBeep() {
+    if (!audioCtx) audioCtx = new AudioContext();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    g.gain.value = bpmVol * 0.4;
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.05);
+}
+
+/* ===== Beat ===== */
+function triggerBeatEffect() {
+    corners.forEach(c=>{
+        c.classList.remove("pulse");
+        void c.offsetWidth;
+        c.classList.add("pulse");
+    });
+
+    const move = isFinished ? 8 : 4;
+    const rot  = isFinished ? 1.2 : 0.6;
+    const zoom = isFinished ? 1.06 : 1.03;
+
+    slideshow.style.setProperty("--x", `${rand(-move,move)}px`);
+    slideshow.style.setProperty("--y", `${rand(-move,move)}px`);
+    slideshow.style.setProperty("--r", `${rand(-rot,rot)}deg`);
+    slideshow.style.setProperty("--zoom", zoom);
+
+    slideshow.classList.remove("beat");
+    void slideshow.offsetWidth;
+    slideshow.classList.add("beat");
+}
+
+function playBeat() {
+    if (isPaused) return;
+    triggerBeatEffect();
+
+    if (useDefaultBeep) playDefaultBeep();
+    else {
+        metronome.currentTime = 0;
+        metronome.volume = bpmVol;
+        metronome.play().catch(()=>{
+            useDefaultBeep = true;
+            playDefaultBeep();
+        });
+    }
+}
+
+/* ===== BPM ===== */
+function restartMetro() {
+    clearInterval(metroTimer);
+    metroTimer = setInterval(playBeat, 60000 / BPM);
+    bpmInput.value = BPM;
+}
+
+function startRandomBPM() {
+    clearInterval(bpmTimer);
+    function update() {
+        BPM = Math.floor(rand(15,121));
+        restartMetro();
+    }
+    update();
+    bpmTimer = setInterval(update, 10000);
+}
+
+function startFixedBPM() {
+    clearInterval(bpmTimer);
+    BPM = Number(bpmInput.value) || BPM;
+    restartMetro();
+}
+
+/* ===== UI ===== */
+modeBtn.onclick = ()=>{
+    if (isFinished) return;
+    isRandomMode = !isRandomMode;
+    modeBtn.textContent = isRandomMode ? "RANDOM" : "FIXED";
+    bpmInput.disabled = isRandomMode;
+    isRandomMode ? startRandomBPM() : startFixedBPM();
+};
+
+pauseBtn.onclick = ()=>{
+    if (!isPaused) {
+        isPaused = true;
+        clearTimeout(imageTimer);
+        clearInterval(metroTimer);
+        clearInterval(bpmTimer);
+        pauseBtn.textContent = "▶ PLAY";
+    } else {
+        isPaused = false;
+        scheduleNextImage();
+        isRandomMode ? startRandomBPM() : startFixedBPM();
+        pauseBtn.textContent = "⏸ STOP";
+    }
+};
+
+finishBtn.onclick = ()=>{
+    isFinished = true;
+
+    clearInterval(bpmTimer);
+    isRandomMode = false;
+    modeBtn.textContent = "FINISH";
+    bpmInput.disabled = true;
+
+    BPM = 240;
+    restartMetro();
+
+    bgmSound.pause();
+    bgmSound.currentTime = 0;
+
+    finishSound.currentTime = 0;
+    finishSound.volume = bgmVol;
+    finishSound.play().catch(()=>{});
+};
+
+/* ===== Start ===== */
+showNextImage();
+document.body.addEventListener("click", ()=>{
+    bgmSound.volume = bgmVol;
+    bgmSound.play().catch(()=>{});
+    startRandomBPM();
+}, { once:true });
+</script>
+
+</body>
+</html>
